@@ -1,0 +1,14 @@
+{
+    "Admin": {
+        "profile": {
+            "gender": "Male"
+        },
+        "patients": {
+            "בהגכהדג": {
+                "gender": "Male",
+                "text": "",
+                "analysis": {}
+            }
+        }
+    }
+}
