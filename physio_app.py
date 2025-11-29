@@ -11,116 +11,236 @@ import datetime
 # --- הגדרות ---
 COORDS_FILE = "body_coords.json"
 DB_FILE = "clinic_data.json"
+LOGO_FILE = "logo.png"
 IMAGES_DIR = "therapist_images"
 
 if not os.path.exists(IMAGES_DIR): os.makedirs(IMAGES_DIR)
 
-# --- פונקציות תמונה ---
-def get_image_base64(image_path):
-    if os.path.exists(image_path):
-        with open(image_path, "rb") as img_file:
-            return base64.b64encode(img_file.read()).decode('utf-8')
-    return None
+# --- המוח הרפואי (Medical Knowledge Base) ---
+# זהו מנוע שמכיל ידע רפואי וממיין אותו לקטגוריות
+MEDICAL_KNOWLEDGE = {
+    "hpc": [
+        "נפלתי", "תאונה", "חבלה", "מכה", "סיבוב", "תנועה לא טובה", "התחיל", "לפני", 
+        "חריף", "כרוני", "פתאומי", "הדרגתי", "מתמשך", "החמרה", "התקף", "טראומה",
+        "תאונת דרכים", "צליפצ", "וויפלש", "הרמתי", "סחבתי", "אימון", "חדר כושר"
+    ],
+    "gh": [
+        "סוכרת", "לחץ דם", "יתר לחץ דם", "שומנים", "כולסטרול", "לב", "אסטמה", "עישון",
+        "סרטן", "ניתוח", "שבר", "פריקה", "אוסטיאופורוזיס", "דלקת פרקים", "הריון",
+        "ניתוח קיסרי", "אפנדציט", "בלוטת התריס", "משקל", "גובה", "BMI", "pacemaker"
+    ],
+    "med": [
+        "כדור", "תרופה", "אקמול", "אופטלגין", "נורופן", "אדוויל", "ארקוקסיה", "אתופן",
+        "טרמדקס", "רוקסט", "פרקוסט", "זריקה", "סטרואידים", "חומצה היאלורונית",
+        "ct", "mri", "us", "רנטגן", "צילום", "מיפוי עצמות", "emg", "בדיקת דם"
+    ],
+    "anatomy_front": [
+        "חזה", "בטן", "סטרנום", "צלעות", "מפשעה", "ארבע ראשי", "קוואד", "שוק", "פנים", "עיניים", "לסת"
+    ],
+    "anatomy_back": [
+        "גב", "עמוד שדרה", "שכמה", "סקפולה", "עכוז", "ישבן", "המסטרינג", "תאומים", "אחורי", "עורף"
+    ],
+    "anatomy_joints": [
+        "כתף", "ברך", "קרסול", "ירך", "מרפק", "שורש כף יד", "אצבעות", "בוהן"
+    ],
+    "pain_desc": [
+        "שורף", "דוקר", "לוחץ", "עמום", "חד", "מקרין", "זרמים", "נימול", "רדימות", "פעימות"
+    ],
+    "agg": [
+        "הליכה", "עמידה", "ישיבה", "שכיבה", "כיפוף", "יישור", "רוטציה", "נהיגה", 
+        "מדרגות", "עליה", "ירידה", "ריצה", "קפיצה", "שיעול", "עיטוש", "מאמץ"
+    ],
+    "ease": [
+        "מנוחה", "שינוי תנוחה", "חימום", "קירור", "קרח", "מקלחת", "מסאז", "מתיחה", "כרית"
+    ],
+    "night": [
+        "לילה", "שינה", "מתעורר", "נרדם", "כאב לילי", "צד", "גב", "בטן"
+    ],
+    "soc": [
+        "עובד", "פנסיה", "סטודנט", "משרד", "הייטק", "פיזי", "נהג", "נשוי", "רווק", "ילדים",
+        "לבד", "קומה", "מעלית", "מדרגות בבית", "ספורטאי", "תחביב"
+    ]
+}
 
-def circular_avatar_html(image_path):
-    img_b64 = get_image_base64(image_path)
-    if not img_b64: return ""
-    return f"""<div style="display: flex; justify-content: center; margin-bottom: 15px;">
-            <img src="data:image/png;base64,{img_b64}" 
-            style="border-radius: 50%; width: 100px; height: 100px; object-fit: cover; border: 3px solid #ffcc80;"></div>"""
-
-# --- ניהול נתונים ---
+# --- פונקציות תשתית ---
 def load_data():
     coords = {
-        "ראש - קדמי": [150, 40], "כתף ימין - קדמי": [95, 120], "ברך ימין - קדמי": [115, 460],
-        "גב תחתון": [450, 240], "גב עליון": [450, 160], "אגן - אחורי": [450, 300]
+        "ראש - קדמי": [150, 40], "כתף ימין - קדמי": [95, 120], "כתף שמאל - קדמי": [205, 120],
+        "חזה": [150, 150], "בטן": [150, 240], "אגן - קדמי": [150, 290],
+        "ברך ימין - קדמי": [115, 460], "ברך שמאל - קדמי": [185, 460],
+        "גב עליון": [450, 160], "גב תחתון": [450, 240]
     }
     if os.path.exists(COORDS_FILE):
         try: coords.update(json.load(open(COORDS_FILE, "r")))
         except: pass
     
-    db = {"דניאל": {"profile": {"gender": "Male"}, "patients": {}}}
+    # טעינת DB - אם אין קובץ, מחזירים מילון ריק!
+    db = {} 
     if os.path.exists(DB_FILE):
         try: db = json.load(open(DB_FILE, "r", encoding="utf-8"))
         except: pass
     return coords, db
 
 def save_db(db):
-    with open(DB_FILE, "w", encoding="utf-8") as f: json.dump(db, f, indent=4, ensure_ascii=False)
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(db, f, indent=4, ensure_ascii=False)
 
-# --- פונקציה קריטית: איפוס מסך למטופל חדש ---
-def reset_screen_fields():
-    """מנקה את כל השדות במסך כדי שלא יעבור מידע בין מטופלים"""
-    fields = ["pp", "hpc", "gh", "med", "agg", "ease", "night", "wake", "plan", "soc", "exp", "pain_slider"]
-    for f in fields:
-        st.session_state[f] = "" if f != "pain_slider" else 0
+def get_image_base64(image_path):
+    if os.path.exists(image_path):
+        with open(image_path, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode('utf-8')
+    return None
 
-def load_patient_to_screen(patient_data):
-    """טוען נתונים של מטופל קיים למסך"""
-    analysis = patient_data.get('analysis', {})
-    
-    # מיפוי שדות הדאטה לשדות המסך
-    mapping = {
-        "pp": "patient_perspective",
-        "hpc": "hpc",
-        "gh": "gh",
-        "med": "med",
-        "agg": "agg",
-        "ease": "ease",
-        "night": "night",
-        "wake": "wake",
-        "soc": "soc",
-        "exp": "exp"
-    }
-    
-    for screen_key, data_key in mapping.items():
-        st.session_state[screen_key] = analysis.get(data_key, "")
+# --- עיצוב UI/UX מקצועי (Medical Clean) ---
+def add_custom_design():
+    st.markdown("""
+        <style>
+        /* ייבוא פונט נקי (Heebo/Roboto) */
+        @import url('https://fonts.googleapis.com/css2?family=Heebo:wght@400;700&display=swap');
         
-    # טעינת כאב בנפרד (כי זה מספר)
-    try:
-        st.session_state['pain_slider'] = int(analysis.get('pain_intensity', 0))
-    except:
-        st.session_state['pain_slider'] = 0
+        html, body, [class*="css"] {
+            font-family: 'Heebo', sans-serif;
+            direction: rtl;
+        }
+        
+        /* רקע כללי נקי */
+        .stApp {
+            background-color: #F4F6F7; 
+        }
+        
+        /* סרגל צד מקצועי */
+        [data-testid="stSidebar"] {
+            background-color: #FFFFFF;
+            border-left: 1px solid #E0E0E0;
+            box-shadow: -2px 0 5px rgba(0,0,0,0.05);
+        }
+        
+        /* כותרות */
+        h1, h2, h3 {
+            color: #2C3E50 !important;
+            font-weight: 700;
+        }
+        
+        /* כרטיסיות מידע (Cards) */
+        .css-1r6slb0, .stTextArea, .stTextInput {
+            background-color: #FFFFFF;
+            border-radius: 8px;
+            
+        }
+        
+        /* שדות קלט */
+        .stTextArea textarea, .stTextInput input {
+            background-color: #FFFFFF !important;
+            border: 1px solid #CFD8DC;
+            border-radius: 6px;
+            color: #37474F !important;
+        }
+        .stTextArea textarea:focus, .stTextInput input:focus {
+            border-color: #009688;
+            box-shadow: 0 0 0 1px #009688;
+        }
 
-# --- המוח המנתח (חוקים) ---
-def analyze_text_deep(text):
+        /* כפתורים - עיצוב מודרני */
+        .stButton button {
+            background-color: #00897B !important; /* Teal */
+            color: white !important;
+            border: none;
+            border-radius: 6px;
+            padding: 0.5rem 1rem;
+            transition: all 0.3s;
+        }
+        .stButton button:hover {
+            background-color: #00796B !important;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        
+        /* כפתור מחיקה - אדום עדין */
+        .delete-btn button {
+            background-color: #FFEBEE !important;
+            color: #D32F2F !important;
+            border: 1px solid #FFCDD2 !important;
+        }
+        
+        /* כותרות סקשנים בטופס */
+        .form-header {
+            background: linear-gradient(90deg, #00695c 0%, #00897B 100%);
+            color: white;
+            padding: 8px 15px;
+            border-radius: 6px;
+            margin-top: 20px;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+            display: flex;
+            align-items: center;
+        }
+        
+        /* תגיות (Labels) */
+        label {
+            color: #546E7A !important;
+            font-weight: 600;
+            font-size: 0.9rem;
+        }
+        
+        </style>
+    """, unsafe_allow_html=True)
+
+# --- מנוע הבינה המלאכותית (Medical Engine) ---
+def analyze_medical_text(text):
     res = {"body_parts": [], "pain": 0, "fields": {}}
     t = text.replace(",", " ").replace(".", " ")
     
-    # 1. גוף
+    # 1. זיהוי צד וכיוון
     side = "שמאל" if "שמאל" in t else "ימין"
-    view = "אחורי" if any(w in t for w in ["גב", "אחור", "עורף", "ישבן"]) else "קדמי"
+    view = "אחורי" if any(w in t for w in MEDICAL_KNOWLEDGE["anatomy_back"]) else "קדמי"
     
-    parts_map = {
-        "כתף": f"כתף {side} - {view}", "ברך": f"ברך {side} - {view}",
-        "גב תחתון": "גב תחתון", "גב": "גב עליון", "ראש": f"ראש - {view}"
-    }
-    for k, v in parts_map.items():
-        if k in t: res["body_parts"].append(v)
+    # 2. זיהוי אנטומיה חכם
+    for organ in MEDICAL_KNOWLEDGE["anatomy_joints"]:
+        if organ in t:
+            res["body_parts"].append(f"{organ} {side} - {view}")
     
-    # 2. כאב
+    for organ in MEDICAL_KNOWLEDGE["anatomy_front"]:
+        if organ in t: res["body_parts"].append(organ) # מיקומים מרכזיים
+        
+    for organ in MEDICAL_KNOWLEDGE["anatomy_back"]:
+        if organ in t and "גב" in organ: # טיפול מיוחד לגב
+            if "תחתון" in t: res["body_parts"].append("גב תחתון")
+            elif "עליון" in t: res["body_parts"].append("גב עליון")
+            else: res["body_parts"].append("גב תחתון") # ברירת מחדל
+
+    # 3. זיהוי כאב
     for w in t.split():
         if w.isdigit() and int(w) <= 10: res["pain"] = int(w)
 
-    # 3. מילוי טבלה (לפי מילות מפתח)
-    CATEGORIES = {
-        "hpc": ["נפלתי", "תאונה", "מכה", "התחיל", "כואב לי", "לפני"],
-        "gh": ["סוכרת", "לחץ דם", "בריא", "ניתוח", "שוקל"],
-        "med": ["כדור", "אקמול", "תרופה"],
-        "agg": ["הליכה", "עמידה", "כיפוף", "מאמץ"],
-        "ease": ["מנוחה", "שכיבה", "חימום"],
-        "night": ["לילה", "שינה"],
-        "soc": ["עובד", "נשוי", "ספורט"],
-        "pp": [] # תמיד מקבל הכל
-    }
+    # 4. סיווג לקטגוריות
+    # סורק את כל המילון הרפואי ומחפש התאמות
+    for category, keywords in MEDICAL_KNOWLEDGE.items():
+        found_terms = []
+        for term in keywords:
+            if term in t:
+                # טריק: מוצא את המילה ולוקח קצת הקשר (3 מילים קדימה ואחורה)
+                words = t.split()
+                try:
+                    idx = words.index(term)
+                    start = max(0, idx - 2)
+                    end = min(len(words), idx + 4)
+                    context = " ".join(words[start:end])
+                    found_terms.append(context)
+                except:
+                    found_terms.append(term)
+        
+        if found_terms:
+            # מיפוי שמות קטגוריות לשמות שדות ב-DB
+            field_map = {
+                "hpc": "hpc", "gh": "gh", "med": "med", "agg": "agg", 
+                "ease": "ease", "night": "night", "soc": "soc"
+            }
+            if category in field_map:
+                res["fields"][field_map[category]] = " | ".join(list(set(found_terms)))
     
-    for cat, keywords in CATEGORIES.items():
-        found = [word for word in keywords if word in t]
-        if found or cat == "pp":
-            # אם מצא מילה, הוא מעתיק את המשפט הרלוונטי (פשוט את כל הטקסט במקרה הזה כדי לא לאבד מידע)
-            # בגרסה מתקדמת אפשר לחתוך משפטים
-            res["fields"][cat] = t 
-
+    # תמיד שומר את הטקסט המלא ב-Perspective
+    if "pp" not in res["fields"]:
+        res["fields"]["pp"] = t
+        
     return res
 
 def draw_map(gender, parts, intensity, coords):
@@ -130,17 +250,24 @@ def draw_map(gender, parts, intensity, coords):
         img = Image.open(path).convert("RGBA")
         overlay = Image.new('RGBA', img.size, (255,255,255,0))
         draw = ImageDraw.Draw(overlay)
-        color = (255, 0, 0, 150)
+        color = (231, 76, 60, 180) # אדום רפואי יפה
+        
         for part in parts:
+            found = False
+            # חיפוש מדויק
             if part in coords:
-                x, y = coords[part] if len(coords[part])==2 else coords[part][:2]
+                x, y = coords[part][:2]
                 draw.ellipse((x-25, y-25, x+25, y+25), fill=color)
-            else: # חיפוש חלקי
+                found = True
+            # חיפוש חכם (Fuzzy)
+            else:
+                base = part.split(" - ")[0]
                 for k, v in coords.items():
-                    if part.split(" - ")[0] in k:
-                         x, y = v if len(v)==2 else v[:2]
-                         draw.ellipse((x-25, y-25, x+25, y+25), fill=color)
-                         break
+                    if base in k:
+                        x, y = v[:2]
+                        draw.ellipse((x-25, y-25, x+25, y+25), fill=color)
+                        found = True
+                        break
         return Image.alpha_composite(img, overlay)
     except: return None
 
@@ -152,114 +279,118 @@ def process_audio(audio_bytes):
             return r.recognize_google(r.record(source), language="he-IL")
     except: return None
 
-# --- עיצוב ---
-def add_custom_design():
-    st.markdown("""
-        <style>
-        .stApp { background-color: #e0f7fa; }
-        h1, h2, h3, h4, p, label, div, span, input, textarea { color: black !important; }
-        [data-testid="stSidebar"] { background-color: #b0bec5; border-right: 2px solid #546e7a; }
-        .stButton button { background-color: #b9f6ca; border: 1px solid black !important; border-radius: 10px; }
-        .stTextArea textarea, .stTextInput input { background-color: white !important; border: 1px solid #ccc; }
-        .section-header { background-color: #00695c; color: white !important; padding: 5px 10px; border-radius: 5px; margin-top: 15px; font-weight: bold; }
-        </style>
-    """, unsafe_allow_html=True)
-
-# --- App ---
-st.set_page_config(layout="wide", page_title="Sunrise Mobile")
+# --- Main App ---
+st.set_page_config(layout="wide", page_title="Medical Intake AI")
 add_custom_design()
+
 coords, clinic_db = load_data()
 if 'clinic_db' not in st.session_state: st.session_state.clinic_db = clinic_db
 if 'coords' not in st.session_state: st.session_state.coords = coords
 
-# משתנה לשמירת המטופל הפעיל בזיכרון (כדי לא לאבד במעבר)
-if 'active_patient_id' not in st.session_state: st.session_state.active_patient_id = None
-
+# --- Sidebar ---
 with st.sidebar:
-    st.title("👨‍⚕️ ניהול")
-    therapist_list = list(st.session_state.clinic_db.keys())
-    selected_therapist = st.selectbox("מטפל:", therapist_list)
-    therapist_data = st.session_state.clinic_db[selected_therapist]
-    
-    # תמיכה לאחור
-    if "profile" not in therapist_data:
-        therapist_data = {"profile": {"gender": "Male"}, "patients": therapist_data}
-    
-    # תמונה
-    img = therapist_data["profile"].get("image_path")
-    if img: st.markdown(circular_avatar_html(img), unsafe_allow_html=True)
-    
-    patients_dict = therapist_data.get("patients", {})
+    # לוגו
+    if os.path.exists(LOGO_FILE):
+        st.image(LOGO_FILE, use_container_width=True)
+    else:
+        st.markdown("## 🏥 Medical AI")
     
     st.markdown("---")
-    # יצירת מטופל חדש - עם איפוס מסך!
-    with st.expander("➕ מטופל חדש"):
-        new_p = st.text_input("שם:")
-        new_g = st.radio("מין:", ["Male", "Female"], horizontal=True)
-        if st.button("צור תיק נקי"):
-            if new_p and new_p not in patients_dict:
-                # יצירת התיק
-                patients_dict[new_p] = {"gender": new_g, "age": "", "text": "", "analysis": {}}
-                save_db(st.session_state.clinic_db)
-                
-                # מעבר למטופל החדש וניקוי מסך
-                st.session_state.active_patient_id = new_p
-                reset_screen_fields() # ניקוי קריטי!
-                st.rerun()
-
-    # בחירת מטופל קיים
-    if len(patients_dict) > 0:
-        # אם אין מטופל פעיל, בחר את הראשון
-        if not st.session_state.active_patient_id or st.session_state.active_patient_id not in patients_dict:
-            st.session_state.active_patient_id = list(patients_dict.keys())[0]
-            
-        selected_p = st.radio("בחר תיק:", list(patients_dict.keys()), index=list(patients_dict.keys()).index(st.session_state.active_patient_id))
+    
+    # 1. בחירת מטפל (אם הרשימה ריקה - מציג רק הוספה)
+    therapists = list(st.session_state.clinic_db.keys())
+    
+    if not therapists:
+        st.warning("המערכת ריקה. אנא הוסף מטפל ראשון.")
+        with st.expander("➕ הוספת מטפל", expanded=True):
+            new_t = st.text_input("שם המטפל:")
+            new_g = st.radio("מגדר:", ["Male", "Female"], horizontal=True)
+            up_file = st.file_uploader("תמונה (אופציונלי)", type=['png', 'jpg'])
+            if st.button("צור פרופיל"):
+                if new_t:
+                    path = None
+                    if up_file:
+                        path = os.path.join(IMAGES_DIR, f"{new_t}.png")
+                        with open(path, "wb") as f: f.write(up_file.getbuffer())
+                    st.session_state.clinic_db[new_t] = {"profile": {"gender": new_g, "image_path": path}, "patients": {}}
+                    save_db(st.session_state.clinic_db)
+                    st.rerun()
+        st.stop() # עוצר כאן עד שיווצר מטפל
         
-        # אם המשתמש החליף מטופל ידנית ברדיו
-        if selected_p != st.session_state.active_patient_id:
-            st.session_state.active_patient_id = selected_p
-            # טעינת הנתונים של המטופל החדש למסך
-            load_patient_to_screen(patients_dict[selected_p])
-            st.rerun()
     else:
-        st.warning("אין תיקים. צור חדש.")
-        st.stop()
+        selected_t = st.selectbox("מטפל מחובר:", therapists)
+        t_data = st.session_state.clinic_db[selected_t]
+        
+        # תמונת מטפל
+        img_path = t_data["profile"].get("image_path")
+        if img_path and os.path.exists(img_path):
+            with open(img_path, "rb") as f:
+                b64 = base64.b64encode(f.read()).decode()
+            st.markdown(f'<div style="text-align:center"><img src="data:image/png;base64,{b64}" style="width:100px;height:100px;border-radius:50%;border:3px solid #009688;"></div>', unsafe_allow_html=True)
+        else:
+            emoji = "👨‍⚕️" if t_data["profile"]["gender"]=="Male" else "👩‍⚕️"
+            st.markdown(f"<div style='text-align:center;font-size:60px;'>{emoji}</div>", unsafe_allow_html=True)
+            
+        patients = t_data["patients"]
+        
+        st.markdown("---")
+        
+        # ניהול מטופלים
+        with st.expander("➕ מטופל חדש"):
+            p_name = st.text_input("שם מלא:")
+            p_gen = st.radio("מין:", ["Male", "Female"], horizontal=True, key="p_gen")
+            if st.button("פתח תיק"):
+                if p_name and p_name not in patients:
+                    patients[p_name] = {"gender": p_gen, "age": "", "text": "", "analysis": {}}
+                    save_db(st.session_state.clinic_db)
+                    st.rerun()
+        
+        if patients:
+            curr_p = st.selectbox("בחר מטופל:", list(patients.keys()))
+            # כפתור מחיקה
+            st.markdown('<div class="delete-btn">', unsafe_allow_html=True)
+            if st.button("🗑️ מחק תיק"):
+                del patients[curr_p]
+                save_db(st.session_state.clinic_db)
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+        else:
+            st.info("אין תיקים פתוחים.")
+            st.stop()
 
-# --- עבודה על המטופל הפעיל ---
-curr_p = st.session_state.active_patient_id
-data = patients_dict[curr_p]
+# --- Main Content ---
+data = patients[curr_p]
 if 'analysis' not in data: data['analysis'] = {}
 anl = data['analysis']
-p_gender = data.get('gender', 'Male')
+p_gen = data.get('gender', 'Male')
 
-c1, c2 = st.columns([1, 6])
-with c1: st.write("## 🌅")
-with c2: st.markdown(f"### תיק רפואי: {curr_p}")
+# כותרת ראשית
+st.markdown(f"## תיק רפואי: {curr_p}")
+st.caption(f"תאריך: {datetime.date.today().strftime('%d/%m/%Y')} | מין: {'זכר' if p_gen=='Male' else 'נקבה'}")
 
-# --- הקלטה ---
-audio = mic_recorder(start_prompt="🎤 התחל הקלטה", stop_prompt="⏹️ סיים ושמור", key='rec')
+# הקלטה
+audio = mic_recorder(start_prompt="🎤 התחל הקלטה", stop_prompt="⏹️ סיים ונתח", key='rec')
 
 if audio:
-    st.toast("מעבד...")
+    st.toast("מנתח שמע...")
     text = process_audio(audio['bytes'])
     if text:
-        # שמירת הטקסט הגולמי
         data['text'] += "\n" + text
+        # המנוע הרפואי בפעולה
+        res = analyze_medical_text(text)
         
-        # ניתוח
-        res = analyze_text_deep(text)
-        
-        # עדכון מבנה הנתונים ב-DB
+        # עדכון גרפי
         if res['body_parts']: anl['body_parts'] = res['body_parts']
         if res['pain'] > 0: anl['pain_intensity'] = res['pain']
         
-        for k, v in res['fields'].items():
-            # הוספת המידע החדש למידע הקיים ב-DB
-            old_val = anl.get(k, "")
-            anl[k] = f"{old_val}\n{v}".strip()
-            
-        # עדכון המסך (כדי שנראה את השינוי מיד)
-        load_patient_to_screen(data)
+        # עדכון שדות טקסט (הוספה חכמה)
+        mapping = {"pp": "pp", "hpc": "hpc", "gh": "gh", "med": "med", "agg": "agg", "ease": "ease", "night": "night", "soc": "soc"}
+        for k, v in mapping.items():
+            if k in res['fields']:
+                curr = st.session_state.get(v, "")
+                # משרשר רק אם המידע חדש
+                if res['fields'][k] not in curr:
+                    st.session_state[v] = f"{curr}\n• {res['fields'][k]}".strip()
         
         save_db(st.session_state.clinic_db)
         st.rerun()
@@ -269,54 +400,48 @@ st.markdown("---")
 col_form, col_map = st.columns([1.5, 1])
 
 with col_form:
-    # אתחול שדות אם לא קיימים (למניעת שגיאות)
-    if "pp" not in st.session_state: reset_screen_fields()
+    # אתחול שדות
+    fields = ["pp", "hpc", "gh", "med", "agg", "ease", "night", "soc", "exp", "plan"]
+    for f in fields: 
+        if f not in st.session_state: st.session_state[f] = ""
 
-    st.markdown("<div class='section-header'>History</div>", unsafe_allow_html=True)
-    # שימוש ב-key מיוחד שמקושר ל-session_state
-    st.text_area("Patient Perspective", key="pp", height=70)
-    st.text_area("HPC", key="hpc", height=70)
+    st.markdown("<div class='form-header'>Subjective Assessment</div>", unsafe_allow_html=True)
+    st.text_area("Patient's Perspective", key="pp", height=70)
+    st.text_area("HPC (History of Present Condition)", key="hpc", height=90)
     
     c1, c2 = st.columns(2)
     with c1: st.text_area("Social History", key="soc", height=60)
     with c2: st.text_input("Expectations", key="exp")
 
-    st.markdown("<div class='section-header'>Medical</div>", unsafe_allow_html=True)
+    st.markdown("<div class='form-header'>Medical Background</div>", unsafe_allow_html=True)
     c3, c4 = st.columns(2)
-    with c3: st.text_input("General Health", key="gh")
-    with c4: st.text_input("Medications", key="med")
+    with c3: st.text_area("General Health / FH", key="gh", height=60)
+    with c4: st.text_area("Medications / Imaging", key="med", height=60)
     
-    st.markdown("<div class='section-header'>Pain & Behavior</div>", unsafe_allow_html=True)
-    st.slider("VAS (0-10)", 0, 10, key="pain_slider")
+    st.markdown("<div class='form-header'>Symptoms & Behavior</div>", unsafe_allow_html=True)
+    pain_val = anl.get('pain_intensity', 0)
+    st.slider("Pain Intensity (VAS)", 0, 10, int(pain_val))
     
     c5, c6 = st.columns(2)
-    with c5: st.text_area("Aggravating", key="agg", height=60)
-    with c6: st.text_area("Easing", key="ease", height=60)
+    with c5: st.text_area("Aggravating Factors", key="agg", height=60)
+    with c6: st.text_area("Easing Factors", key="ease", height=60)
     
-    c7, c8 = st.columns(2)
-    with c7: st.text_input("Night Pain", key="night")
-    with c8: st.text_input("On Waking", key="wake")
+    st.text_input("24h / Night Pain", key="night")
 
-    # שמירה ידנית של שינויים בטופס (למקרה שהמשתמש מקליד)
-    if st.button("💾 שמור שינויים ידניים"):
-        # מעתיק מהמסך ל-DB
-        mapping = {"pp": "pp", "hpc": "hpc", "gh": "gh", "med": "med", "agg": "agg", "ease": "ease", "night": "night", "wake": "wake", "soc": "soc", "exp": "exp"}
-        for db_key, screen_key in mapping.items():
-            anl[db_key] = st.session_state[screen_key]
-        anl['pain_intensity'] = st.session_state['pain_slider']
-        
-        save_db(st.session_state.clinic_db)
-        st.success("נשמר!")
+    st.markdown("<div class='form-header'>Plan</div>", unsafe_allow_html=True)
+    st.text_area("Physical Examination Plan", key="plan", height=80)
 
 with col_map:
     st.markdown("### Body Chart")
     parts = anl.get('body_parts', [])
     pain = anl.get('pain_intensity', 0)
-    final_img = draw_map(p_gender, parts, pain, st.session_state.coords)
+    final_img = draw_map(p_gen, parts, pain, st.session_state.coords)
+    
     if final_img: 
         st.image(final_img, use_container_width=True)
-        if parts: st.success(f"זוהה: {', '.join(parts)}")
-    else: st.warning("No Image")
+        if parts: st.info(f"זוהה: {', '.join(parts)}")
+    else: 
+        st.error("Missing Image File")
 
-with st.expander("📝 תמלול מלא"):
+with st.expander("📝 תמלול מלא (לביקורת)"):
     st.text(data['text'])
